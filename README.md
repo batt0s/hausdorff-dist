@@ -1,4 +1,4 @@
-# riemann-py
+# hausdorff-dist
 
 ## Hausdorff Mesafe Laboratuvarı
 
