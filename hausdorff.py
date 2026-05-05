@@ -7,69 +7,77 @@ Created on Sun May  3 15:48:22 2026
 
 import numpy as np
 import sympy as sp
+import re
 from skimage import measure
 from scipy.spatial.distance import cdist
 
-
-
-def get_boundary_points(equation_str, resolution=200, grid_bounds=(-6, 6)):
+def get_shape_points(equation_str, resolution=200, grid_bounds=(-6, 6)):
     """
-    Parses a mathematical equation string and extracts the 2D boundary points of the shape.
+    Parses equations, inequalities, and domain restrictions to extract 2D shape points.
     
-    This function converts a string equation (implicit or explicit) into a level-set surface 
-    (Z = f(x, y)) over a defined grid. It then uses the marching squares algorithm to find 
-    the zero-contour (where Z = 0), representing the actual boundary of the geometric shape.
+    This function evaluates a given mathematical string over a 2D grid using boolean masking.
+    It supports inequalities (e.g., solid disks) and logical AND operations (e.g., line segments).
+    For exact equations (e.g., x = y), it applies a dynamic tolerance to capture the line 
+    on the discrete grid.
     
     Parameters
     ----------
     equation_str : str
-        The mathematical equation of the set (e.g., "x**2 + y**2 = 4" or "abs(x) + abs(y) = 1").
+        The mathematical condition (e.g., "x**2 + y**2 <= 4" or "y = 0 & x >= -5 & x <= 5").
     resolution : int, optional
-        The grid density for evaluating the equation (default is 200). Higher values yield 
-        smoother boundaries but increase computation time.
+        The grid density for evaluating the condition (default is 200).
     grid_bounds : tuple of float, optional
-        The (min, max) coordinate limits for both the X and Y axes used to generate 
-        the evaluation grid (default is (-6, 6)). It defines the spatial bounding box 
-        within which the algorithm searches for the geometric shape's contour.
+        The (min, max) coordinate limits for the evaluation grid (default is (-6, 6)).
         
     Returns
     -------
     numpy.ndarray
-        An (N, 2) array containing the (X, Y) coordinates of the points lying on the boundary.
-        Returns an empty array if no boundary is found.
-        
-    External Dependencies & Documentation
-    -------------------------------------
-    - sympy.symbols: https://docs.sympy.org/latest/modules/core.html#sympy.core.symbol.symbols
-    - sympy.parse_expr: https://docs.sympy.org/latest/modules/parsing.html#sympy.parsing.sympy_parser.parse_expr
-    - sympy.lambdify: https://docs.sympy.org/latest/modules/utilities/lambdify.html
-    - numpy.linspace: https://numpy.org/doc/stable/reference/generated/numpy.linspace.html
-    - numpy.meshgrid: https://numpy.org/doc/stable/reference/generated/numpy.meshgrid.html
-    - skimage.measure.find_contours: https://scikit-image.org/docs/stable/api/skimage.measure.html#skimage.measure.find_contours
-    - numpy.zeros_like: https://numpy.org/doc/stable/reference/generated/numpy.zeros_like.html
-    - numpy.vstack: https://numpy.org/doc/stable/reference/generated/numpy.vstack.html
+        An (N, 2) array containing the (X, Y) coordinates of the points satisfying the condition.
     """
-    x_sym, y_sym = sp.symbols('x y')
-    lhs, rhs = equation_str.split('=')
-    expr = sp.parse_expr(lhs) - sp.parse_expr(rhs)
-    f = sp.lambdify((x_sym, y_sym), expr, 'numpy')
-    
     vals = np.linspace(grid_bounds[0], grid_bounds[1], resolution)
     X, Y = np.meshgrid(vals, vals)
-    Z = f(X, Y)
     
-    contours = measure.find_contours(Z, 0)
+    tol = (grid_bounds[1] - grid_bounds[0]) / resolution * 1.5
     
-    all_points = []
-    for contour in contours:
-        actual_points = np.zeros_like(contour)
-        actual_points[:, 0] = vals[0] + contour[:, 1] * (vals[1] - vals[0]) # X
-        actual_points[:, 1] = vals[0] + (resolution - 1 - contour[:, 0]) * (vals[1] - vals[0]) # Y (Y ekseni ters)
-        all_points.append(actual_points)
+    eq_str = equation_str.replace(' and ', ' & ').replace(' or ', ' | ')
+    tokens = re.split(r'(&|\|)', eq_str)
+    processed_tokens = []
     
-    return np.vstack(all_points) if all_points else np.array([])
+    for token in tokens:
+        if token in ('&', '|'):
+            processed_tokens.append(token)
+            continue
+            
+        t = token.strip()
+        if not t: continue
+            
+        if any(op in t for op in ['<=', '>=', '<', '>']):
+            processed_tokens.append(f"({t})")
+        elif '==' in t:
+            lhs, rhs = t.split('==')
+            processed_tokens.append(f"(np.abs(({lhs}) - ({rhs})) < {tol})")
+        elif '=' in t:
+            lhs, rhs = t.split('=')
+            processed_tokens.append(f"(np.abs(({lhs}) - ({rhs})) < {tol})")
+        else:
+            processed_tokens.append(f"(np.abs({t}) < {tol})")
+            
+    final_expression = " ".join(processed_tokens)
+    
+    env = {
+        "x": X, "y": Y, 
+        "np": np, "abs": np.abs, "tol": tol,
+        "sin": np.sin, "cos": np.cos, "sqrt": np.sqrt
+    }
+    
+    try:
+        mask = eval(final_expression, {"__builtins__": {}}, env)
+        points = np.column_stack((X[mask], Y[mask]))
+        return points
+    except Exception as e:
+        return np.array([])
 
-def get_hausdorff_details(A, B):
+def get_hausdorff_details(A, B, metric_type="euclidean"):
     """
     Calculates the Hausdorff distance between two sets of points and identifies the critical points.
     
@@ -84,6 +92,8 @@ def get_hausdorff_details(A, B):
         An (N, 2) array of coordinates representing the first compact set.
     B : numpy.ndarray
         An (M, 2) array of coordinates representing the second compact set.
+    metric_type: str, optional
+        Optional metric type. (default: euclidean)
         
     Returns
     -------
@@ -101,22 +111,19 @@ def get_hausdorff_details(A, B):
     - numpy.argmin: https://numpy.org/doc/stable/reference/generated/numpy.argmin.html
     - numpy.argmax: https://numpy.org/doc/stable/reference/generated/numpy.argmax.html
     """
-    dists_A_to_B = np.min(cdist(A, B), axis=1)
+    dists_A_to_B = np.min(cdist(A, B, metric=metric_type), axis=1)
     idx_max_A = np.argmax(dists_A_to_B)
     d_AB = dists_A_to_B[idx_max_A]
     pt_A = A[idx_max_A]
-    pt_B_near_A = B[np.argmin(cdist([pt_A], B))]
+    pt_B_near_A = B[np.argmin(cdist([pt_A], B, metric=metric_type))]
     
-    dists_B_to_A = np.min(cdist(B, A), axis=1)
+    dists_B_to_A = np.min(cdist(B, A, metric=metric_type), axis=1)
     idx_max_B = np.argmax(dists_B_to_A)
     d_BA = dists_B_to_A[idx_max_B]
     pt_B = B[idx_max_B]
-    pt_A_near_B = A[np.argmin(cdist([pt_B], A))]
+    pt_A_near_B = A[np.argmin(cdist([pt_B], A, metric=metric_type))]
     
     h = max(d_AB, d_BA)
     
-    if d_AB >= d_BA:
-        return h, pt_A, pt_B_near_A, "A -> B"
-    else:
-        return h, pt_B, pt_A_near_B, "B -> A"
+    return h, d_AB, pt_A, pt_B_near_A, d_BA, pt_B, pt_A_near_B
     
