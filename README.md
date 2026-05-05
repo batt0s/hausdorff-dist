@@ -275,9 +275,9 @@ x=[pA_max[0], pB_near[0]], y=[pA_max[1], pB_near[1]]
 
 | Name | Formula | Geometry of unit ball |
 |---|---|---|
-| Euclidean (L2) | $sqrt(\sum (x_i - y_i)^2)$ | Circle |
-| Manhattan / Cityblock (L1) | $\sum |x_i - y_i|$ | Diamond (rotated square) |
-| Chebyshev (L∞) | $\max (|x_i - y_i|)$ | Axis-aligned square |
+| Euclidean (L2) | $\sqrt{(\sum (x_i - y_i)^2)}$ | Circle |
+| Manhattan / Cityblock (L1) | $\sum \|x_i - y_i\|$ | Diamond (rotated square) |
+| Chebyshev (L∞) | $\max (\|x_i - y_i\|)$ | Axis-aligned square |
 
 Minkowski is intentionally excluded. Its only non-redundant parameter values are p=1 (Manhattan) and p=2 (Euclidean), both of which are already available. Other values of p have no standard geometric interpretation for this use case, and the missing `p` parameter in the original `cdist` call would cause it to silently default to p=2 (Euclidean) anyway.
 
